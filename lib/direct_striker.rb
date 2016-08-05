@@ -6,10 +6,15 @@ require 'rest_client'
 require 'uri'
 
 class DirectStriker
-  def initialize(file)
+  def initialize(base, file)
+    @base = Pathname(base)
     @schema = JSON.parse(File.read(file)).deep_symbolize_keys!
     @endpoint = {}
     parse_links!
+  end
+
+  def unslash(link)
+    link[0] == '/' ? link[1..link.length] : link
   end
 
   def parse_links!(schema = @schema)
@@ -18,7 +23,7 @@ class DirectStriker
         # trace link
         v.each do |link|
           @endpoint[link[:title].to_sym] ||= {}
-          @endpoint[link[:title].to_sym][:href] = link[:href]
+          @endpoint[link[:title].to_sym][:href] = @base.join(unslash(link[:href])).to_s
           @endpoint[link[:title].to_sym][:method] = link[:method].downcase.to_sym
         end
       end
@@ -31,12 +36,18 @@ class DirectStriker
     here = @endpoint[name.to_sym]
     super unless here
 
-    if here[:method] == :get
-      uri = URI(here[:href])
-      uri.query = params.to_param
-      RestClient.get(uri.to_s, options)
-    else
-      RestClient.send(here[:method], params, options)
+    response = begin
+      if here[:method] == :get
+        uri = URI(here[:href])
+        uri.query = params.to_param
+        RestClient.get(uri.to_s, options)
+      else
+        RestClient.send(here[:method], params, options)
+      end
+    rescue RestClient => e
+      e.response
     end
+
+    JSON.parse(response.body) rescue response.body
   end
 end
